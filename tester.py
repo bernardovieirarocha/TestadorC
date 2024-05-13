@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import os
 import re
 import subprocess
@@ -22,12 +23,42 @@ WHITE = "\033[97m"
 
 RESET = "\033[0m"  # called to return to standard terminal text color
 
+currentDir = None
+executarTodosEX = False
+success = []
+report = open("diff.txt", "w")
 
-def get_ex_directory_paths():
+
+parser = argparse.ArgumentParser(description="Simple C Tester")
+
+parser.add_argument("directory", type=str, help="Directory to test")
+parser.add_argument("number", type=int, help="Which number of the exercise to run")
+
+args = parser.parse_args()
+
+if args.number == -1:
+    executarTodosEX = True
+else:
+    executarTodosEX = False
+    if (type(args.number) != int) or (args.number < 1):
+        # Check if the number is a valid integer
+        print(f"{RED}Invalid number!{RESET}")
+        exit()
+if (type(args.directory) != str) or (not os.path.isdir(args.directory)):
+    # Check if the directory is a valid directory
+    print(f"{RED}Invalid directory!{RESET}")
+    exit()
+else:
+    if args.directory.endswith("/") == False:
+        # Add a slash to the end of the directory if it doesn't have one
+        args.directory = args.directory + "/"
+    currentDir = args.directory
+
+
+def get_ex_directory_paths(current_dir="./"):
     """
     Scans the current directory and creates a list of paths for directories named ex*.
     """
-    current_dir = "./"  # Get current working directory
     ex_directories = []
     for item in os.listdir(current_dir):
         if item.startswith("ex") and os.path.isdir(os.path.join(current_dir, item)):
@@ -50,7 +81,13 @@ def get_all_files(directory_path):
 
 
 def compileC(c_code):
-    call_string = "gcc " + c_code + " -o " + c_code.replace(".c", "")
+    call_string = (
+        "gcc "
+        + "-Wall -Wextra -Wpedantic -fsanitize=undefined "
+        + c_code
+        + " -o "
+        + c_code.replace(".c", "")
+    )
     return_code = subprocess.call(call_string, shell=True)
     if return_code == 0:
         print(f"Compilation {GREEN}successful!{RESET}\n")
@@ -67,12 +104,117 @@ def write_report(reportFile, message, entrada):
     report.write(message.communicate()[0].decode())
 
 
-ex_paths = get_ex_directory_paths()
-ex_paths = sorted(ex_paths)
-success = []
-report = open("diff.txt", "w")
+def getEntradas(ex_path):
+    entradas = []
+    entradas_txt = get_all_files(ex_path + "/entradas/")
+    entradas_txt = sorted(entradas_txt)
+    for entrada in entradas_txt:
+        entradas.append(entrada)
+    return entradas
 
-for ex_path in ex_paths:
+
+def getSaidas(ex_path):
+    saidas = []
+    saidas_txt = get_all_files(ex_path + "/saidascorretas/")
+    saidas_txt = sorted(saidas_txt)
+    for saida in saidas_txt:
+        saidas.append(saida)
+    return saidas
+
+
+if currentDir:
+    ex_paths = get_ex_directory_paths(current_dir=currentDir)
+else:
+    ex_paths = get_ex_directory_paths()
+ex_paths = sorted(ex_paths)
+
+if executarTodosEX:
+    print(f"{YELLOW}Running all exercises...{RESET}\n")
+    for ex_path in ex_paths:
+        nome_ex = ex_path.split("/")[-1]
+        print(f"{YELLOW}Processing {nome_ex}{RESET}\n")
+        files_in_exDIR = get_all_files(ex_path)
+        c_code = None
+        for file in files_in_exDIR:
+            if re.findall(r"^ex\d+\.c$", file.split("/")[-1]):
+                c_code = file
+                break
+        if c_code:
+            print(f"{GREEN}C code found! {RESET} {c_code.split('/')[-1]}")
+            if compileC(c_code):
+                executable = c_code.replace(".c", "")
+                print(f"{YELLOW}Checking Input files...{RESET}\n")
+                if os.path.exists(ex_path + "/entradas"):
+                    entradas_txt = getEntradas(ex_path)
+                    for entrada in entradas_txt:
+                        minha_saidaPATH = (
+                            ex_path
+                            + "/"
+                            + entrada.split("/")[-1].replace("entrada", "saida")
+                        )
+                        command = executable + " < " + entrada + " > " + minha_saidaPATH
+                        print(f"Running {command}")
+                        run_code = subprocess.call(command, shell=True)
+                        numberCurrentTest = (
+                            entrada.split("/")[-1]
+                            .replace("entrada", "")
+                            .replace(".txt", "")
+                        )
+                        if run_code == 0:
+                            print(
+                                f"{GREEN}Execution successful of test {numberCurrentTest}!{RESET}"
+                            )
+                        else:
+                            print(
+                                f"{RED}Execution failed of test {numberCurrentTest}!{RESET}"
+                            )
+                        if os.path.exists(ex_path + "/saidascorretas"):
+                            print(f"{BLUE}Checking Output files..{RESET}")
+                            saidas_txt = getSaidas(ex_path)
+                            minhaSaidaAtual = entrada.split("/")[-1].replace(
+                                "entrada", "saida"
+                            )
+                            saidaCorretaAtual = "saidascorretas/" + entrada.split("/")[
+                                -1
+                            ].replace("entrada", "saida")
+                            if os.path.exists(
+                                ex_path + "/" + "saidascorretas/" + minhaSaidaAtual
+                            ):
+                                check_output = subprocess.Popen(
+                                    "diff -wB "
+                                    + ex_path
+                                    + "/"
+                                    + minhaSaidaAtual
+                                    + " "
+                                    + ex_path
+                                    + "/"
+                                    + saidaCorretaAtual,
+                                    shell=True,
+                                    stdout=subprocess.PIPE,
+                                )
+                                check_output.wait()
+                                if not check_output.returncode:
+                                    print(
+                                        f"{GREEN} PASSED!{RESET} {minhaSaidaAtual} and {saidaCorretaAtual} are the same!\n"
+                                    )
+                                    success.append(1)
+                                else:
+                                    success.append(0)
+                                    write_report(report, check_output, entrada)
+                                    print(
+                                        f"{RED}FAILED!{RESET} {minhaSaidaAtual} and {saidaCorretaAtual} are NOT the same!\n"
+                                    )
+                            else:
+                                print(f"{RED}Output files not found!\n{RESET}")
+                        else:
+                            print(f"{RED}Output directory not found!\n{RESET}")
+                else:
+                    print(f"{RED}Input files found!{RESET}")
+        else:
+            print(f"{RED}No C code found!{RESET} ")
+else:
+    print(f"{YELLOW} Running exercise {args.number}...{RESET}\n")
+    ex_path = ex_paths[args.number - 1]
     nome_ex = ex_path.split("/")[-1]
     print(f"{YELLOW}Processing {nome_ex}{RESET}\n")
     files_in_exDIR = get_all_files(ex_path)
@@ -87,8 +229,7 @@ for ex_path in ex_paths:
             executable = c_code.replace(".c", "")
             print(f"{YELLOW}Checking Input files...{RESET}\n")
             if os.path.exists(ex_path + "/entradas"):
-                entradas_txt = get_all_files(ex_path + "/entradas/")
-                entradas_txt = sorted(entradas_txt)
+                entradas_txt = getEntradas(ex_path)
                 for entrada in entradas_txt:
                     minha_saidaPATH = (
                         ex_path
@@ -113,7 +254,7 @@ for ex_path in ex_paths:
                         )
                     if os.path.exists(ex_path + "/saidascorretas"):
                         print(f"{BLUE}Checking Output files..{RESET}")
-                        saidas_txt = get_all_files(ex_path + "/saidascorretas/")
+                        saidas_txt = getSaidas(ex_path)
                         minhaSaidaAtual = entrada.split("/")[-1].replace(
                             "entrada", "saida"
                         )
